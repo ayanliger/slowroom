@@ -25,6 +25,27 @@ public actor AudioLibrary {
 
     public func allItems() -> [LibraryItem] { items }
 
+    @discardableResult
+    public func cleanImportedNames() throws -> Int {
+        let pending = items.filter { LibraryNaming.containsExportArtifacts(title: $0.title, artist: $0.artist) }
+        var count = 0
+        for item in pending {
+            let names = LibraryNaming.infer(from: item.originalName)
+            var title = names.title
+            var variant = 2
+            while items.contains(where: { $0.id != item.id && $0.kind == item.kind
+                && $0.artist == names.artist && $0.title == title }) {
+                title = String(names.title.prefix(94)) + " (\(variant))"
+                variant += 1
+            }
+            if title != item.title || names.artist != item.artist {
+                _ = try rename(item.id, title: title, artist: names.artist)
+                count += 1
+            }
+        }
+        return count
+    }
+
     public func importFiles(
         _ selections: [URL], kind: LibraryKind, optimize: Bool,
         progress: @Sendable (String) -> Void = { _ in }

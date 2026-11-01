@@ -5,6 +5,43 @@ import Testing
 
 @Suite(.serialized)
 struct LibraryTests {
+    @Test func removesDownloaderNamesAndRetainsVersions() {
+        let first = LibraryNaming.infer(from: "SpotiDown.App - Song - Remastered 2016 - An Artist-slowedandreverbstudio (1).wav")
+        #expect(first.artist == "An Artist")
+        #expect(first.title == "Song - Remastered 2016 (Slowed + Reverb) (1)")
+        let second = LibraryNaming.infer(from: "An Artist - Song [OFFICIAL VIDEO] - Label (youtube)-slowedandreverbstudio.wav")
+        #expect(second.artist == "An Artist")
+        #expect(second.title == "Song (Slowed + Reverb)")
+        let third = LibraryNaming.infer(from: "Game 3_ Subtitle Music- Boss Battle [aB3deF9hiJK]-slowedandreverbstudio.wav")
+        #expect(third.artist == "Game 3 Subtitle")
+        #expect(third.title == "Boss Battle (Slowed + Reverb)")
+        let fourth = LibraryNaming.infer(from: "SpotiDownloader.com - Song - Artist_s Band (1)-slowedandreverbstudio.wav")
+        #expect(fourth.artist == "Artist's Band")
+        #expect(fourth.title == "Song (Slowed + Reverb) (1)")
+    }
+
+    @Test func cleansExistingImportsWithoutChangingAudioOrManualNames() async throws {
+        let root = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("SpotiDown.App - Song - Artist-slowedandreverbstudio.wav")
+        try tone(file, seconds: 2)
+        let library = try makeLibrary(root)
+        let item = try #require(try await library.importFile(file, kind: .mix, title: "Song - Artist-slowedandreverbstudio", artist: "SpotiDown.App"))
+        let audio = try Data(contentsOf: item.audioTrack(in: library.directory).fileURL)
+        #expect(try await library.cleanImportedNames() == 1)
+        let renamed = try #require(await library.allItems().first)
+        #expect(renamed.id == item.id)
+        #expect(renamed.title == "Song (Slowed + Reverb)")
+        #expect(renamed.artist == "Artist")
+        #expect(try Data(contentsOf: renamed.audioTrack(in: library.directory).fileURL) == audio)
+        try tone(file, seconds: 3)
+        _ = try await library.importFile(file, kind: .mix, title: "Song - Artist-slowedandreverbstudio", artist: "SpotiDown.App")
+        #expect(try await library.cleanImportedNames() == 1)
+        #expect(await library.allItems().last?.title == "Song (Slowed + Reverb) (2)")
+        _ = try await library.rename(item.id, title: "My custom mix", artist: "Me")
+        #expect(try await library.cleanImportedNames() == 0)
+    }
+
     @Test func cacheCleanupRetainsSourceThroughDirectoryAlias() throws {
         let root = try folder()
         defer { try? FileManager.default.removeItem(at: root) }

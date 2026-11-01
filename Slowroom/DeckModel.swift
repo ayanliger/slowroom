@@ -65,6 +65,8 @@ final class DeckModel {
         configureRemoteControls()
         player.onPlaybackEnded = { [weak self] in self?.advanceQueue() }
         Task {
+            do { try await library?.cleanImportedNames() }
+            catch { self.error = error.localizedDescription }
             await refreshLibrary()
             if !testing, !ProcessInfo.processInfo.arguments.contains("--demo"),
                let saved = UserDefaults.standard.string(forKey: "lastLibraryTrack"),
