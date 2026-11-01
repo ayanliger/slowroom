@@ -2,7 +2,7 @@
 
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](Packages/SlowroomCore/Package.swift) [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-147EFB?logo=swift&logoColor=white)](https://developer.apple.com/xcode/swiftui/) [![iOS 18+](https://img.shields.io/badge/iOS-18%2B-000000?logo=apple&logoColor=white)](Slowroom.xcodeproj/project.pbxproj) [![Xcode 27.1](https://img.shields.io/badge/Xcode-27.1-147EFB?logo=xcode&logoColor=white)](https://developer.apple.com/xcode/) [![Rust 2024](https://img.shields.io/badge/Rust-2024-CE422B?logo=rust&logoColor=white)](NativeSpotify/Cargo.toml) [![Personal prototype](https://img.shields.io/badge/State-personal_prototype-9A6700?logo=apple&logoColor=white&labelColor=555555)](#status)
 
-A personal iPhone audio deck with live speed, pitch and reverb controls for YouTube audio and local files. A local library stores sources and finished mixes, with search, queued playback, renaming and Files import. Spotify sign-in works, but full Spotify playback is currently blocked by audio-key refusals for the tested Premium account; see [Status](#status). The graphite and amber interface takes its spacing and numeric readouts from studio rack effects.
+A personal iPhone audio deck with live speed, pitch and reverb controls for YouTube audio and local files. A local library stores sources and finished mixes, with search, queued playback, renaming and Files import. Spotify sign-in works, but full Spotify playback is currently blocked by audio-key refusals for the tested Premium account; see [Status](#status). The charcoal and rose-pink interface takes its spacing and numeric readouts from studio rack effects.
 
 ## Sources
 

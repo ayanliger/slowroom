@@ -5,12 +5,12 @@ import UIKit
 import UniformTypeIdentifiers
 
 enum DeckTheme {
-    static let background = Color(red: 0.074, green: 0.086, blue: 0.082)
-    static let surface = Color(red: 0.12, green: 0.14, blue: 0.13)
-    static let line = Color(red: 0.28, green: 0.31, blue: 0.29)
-    static let text = Color(red: 0.94, green: 0.93, blue: 0.88)
-    static let secondary = Color(red: 0.70, green: 0.74, blue: 0.70)
-    static let amber = Color(red: 0.91, green: 0.65, blue: 0.37)
+    static let background = Color(red: 0.094623, green: 0.069206, blue: 0.080404)
+    static let surface = Color(red: 0.153252, green: 0.121401, blue: 0.135331)
+    static let line = Color(red: 0.480939, green: 0.411698, blue: 0.441673)
+    static let text = Color(red: 0.961809, green: 0.922851, blue: 0.939099)
+    static let secondary = Color(red: 0.742156, green: 0.672230, blue: 0.701982)
+    static let accent = Color(red: 0.920113, green: 0.609460, blue: 0.756048)
 }
 
 struct DeckView: View {
@@ -76,7 +76,7 @@ struct DeckView: View {
                 if !typeSize.isAccessibilitySize { Spacer() }
                 Text(model.player.isPlaying ? "PLAYING" : "READY")
                     .font(.system(.caption2, design: .monospaced).weight(.semibold))
-                    .foregroundStyle(model.player.isPlaying ? DeckTheme.amber : DeckTheme.secondary)
+                    .foregroundStyle(model.player.isPlaying ? DeckTheme.accent : DeckTheme.secondary)
                     .accessibilityIdentifier("playbackStatus")
             }
             if let track = model.player.track {
@@ -163,7 +163,7 @@ struct DeckView: View {
                         .foregroundStyle(model.player.settings == preset.settings ? DeckTheme.background : DeckTheme.text)
                         .padding(.horizontal, 12).frame(minHeight: 44)
                         .frame(maxWidth: typeSize.isAccessibilitySize ? .infinity : nil, alignment: .leading)
-                        .background(model.player.settings == preset.settings ? DeckTheme.amber : DeckTheme.surface,
+                        .background(model.player.settings == preset.settings ? DeckTheme.accent : DeckTheme.surface,
                                     in: RoundedRectangle(cornerRadius: 6))
                         .accessibilityIdentifier("preset\(preset.name)")
                 }
@@ -213,7 +213,7 @@ struct DeckView: View {
             }
             if model.player.isOriginal {
                 Label("Original is playing. Switch back to hear your settings.", systemImage: "ear")
-                    .font(.caption).foregroundStyle(DeckTheme.amber)
+                    .font(.caption).foregroundStyle(DeckTheme.accent)
             }
         }
     }
@@ -237,7 +237,7 @@ struct DeckView: View {
                 }.buttonStyle(.bordered).disabled(model.player.track == nil || model.busy)
                     .accessibilityIdentifier("saveLibraryMix")
                 if let notice = model.libraryNotice {
-                    Text(notice).font(.caption).foregroundStyle(DeckTheme.amber)
+                    Text(notice).font(.caption).foregroundStyle(DeckTheme.accent)
                 }
             }
         }
@@ -252,14 +252,14 @@ struct DeckView: View {
                 Image(systemName: model.player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.title2).frame(maxWidth: 170, minHeight: 58)
                     .foregroundStyle(DeckTheme.background)
-                    .background(DeckTheme.amber, in: RoundedRectangle(cornerRadius: 8))
+                    .background(DeckTheme.accent, in: RoundedRectangle(cornerRadius: 8))
             }
             .accessibilityLabel(model.player.isPlaying ? "Pause" : "Play")
             .accessibilityIdentifier("playPauseButton")
             Button { model.player.isLooping.toggle() } label: {
                 Image(systemName: model.player.isLooping ? "repeat.circle.fill" : "repeat")
                     .font(.title2).frame(width: 48, height: 48)
-                    .foregroundStyle(model.player.isLooping ? DeckTheme.amber : DeckTheme.text)
+                    .foregroundStyle(model.player.isLooping ? DeckTheme.accent : DeckTheme.text)
             }
             .accessibilityLabel("Loop track")
             .accessibilityValue(model.player.isLooping ? "On" : "Off")
@@ -311,7 +311,7 @@ private struct EffectSlider: View {
                 Text(title).font(.body.weight(.medium))
                 if !typeSize.isAccessibilitySize { Spacer(minLength: 10) }
                 Text(valueText).font(.system(.title2, design: .monospaced).weight(.medium))
-                    .foregroundStyle(DeckTheme.amber).monospacedDigit()
+                    .foregroundStyle(DeckTheme.accent).monospacedDigit()
                     .accessibilityIdentifier(identifier + "Value")
             }
             Slider(value: $value, in: range, step: step) { Text(title) }
@@ -342,7 +342,7 @@ private struct WaveformView: View {
                 let rect = CGRect(x: Double(index) * width, y: (size.height - height) / 2,
                                   width: max(1, width * 0.6), height: height)
                 let played = Double(index) / Double(peaks.count) < fraction
-                context.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(played ? DeckTheme.amber : DeckTheme.secondary.opacity(0.55)))
+                context.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(played ? DeckTheme.accent : DeckTheme.secondary.opacity(0.55)))
             }
         }
     }

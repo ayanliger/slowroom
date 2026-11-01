@@ -70,7 +70,7 @@ struct LibraryView: View {
                             Button("Cancel import") { model.cancelLibraryImport() }
                         }
                         if let notice = model.libraryNotice {
-                            Text(notice).font(.subheadline).foregroundStyle(DeckTheme.amber)
+                            Text(notice).font(.subheadline).foregroundStyle(DeckTheme.accent)
                         }
                     }.padding(.vertical, 8)
                 }.listRowBackground(DeckTheme.background).listRowSeparator(.hidden)
@@ -91,7 +91,7 @@ struct LibraryView: View {
                                 Button { model.playLibrary(item, queue: tracks) } label: {
                                     HStack(spacing: 14) {
                                         Image(systemName: model.currentLibraryID == item.id && model.player.isPlaying ? "waveform" : "play.fill")
-                                            .font(.body).foregroundStyle(DeckTheme.amber).frame(width: 24)
+                                            .font(.body).foregroundStyle(DeckTheme.accent).frame(width: 24)
                                         VStack(alignment: .leading, spacing: 5) {
                                             Text(item.title).font(.body.weight(.medium)).foregroundStyle(DeckTheme.text)
                                                 .lineLimit(2)
@@ -180,7 +180,7 @@ private struct LibraryTransport: View {
                     Text(model.player.track?.title ?? "").font(.subheadline.weight(.medium)).lineLimit(1)
                         .accessibilityIdentifier("libraryNowPlayingTitle")
                     Text(model.player.isOriginal ? "AS SAVED · 1.00×" : "DECK EFFECTS ON")
-                        .font(.system(.caption2, design: .monospaced)).foregroundStyle(DeckTheme.amber)
+                        .font(.system(.caption2, design: .monospaced)).foregroundStyle(DeckTheme.accent)
                         .accessibilityIdentifier("libraryPlaybackMode")
                 }
                 Spacer()
@@ -200,7 +200,7 @@ private struct LibraryTransport: View {
                     .accessibilityLabel("Previous track")
                 Button { model.togglePlayback() } label: {
                     Image(systemName: model.player.isPlaying ? "pause.fill" : "play.fill")
-                        .frame(width: 58, height: 44).background(DeckTheme.amber, in: RoundedRectangle(cornerRadius: 6))
+                        .frame(width: 58, height: 44).background(DeckTheme.accent, in: RoundedRectangle(cornerRadius: 6))
                         .foregroundStyle(DeckTheme.background)
                 }.accessibilityLabel(model.player.isPlaying ? "Pause" : "Play").accessibilityIdentifier("libraryPlayPause")
                 Button { model.advanceQueue() } label: { Image(systemName: "forward.end.fill").frame(width: 44, height: 44) }

@@ -8,7 +8,7 @@ struct SlowroomApp: App {
         WindowGroup {
             SlowroomRootView(model: model)
                 .preferredColorScheme(.dark)
-                .tint(DeckTheme.amber)
+                .tint(DeckTheme.accent)
         }
     }
 }
