@@ -2,6 +2,19 @@ import Foundation
 @preconcurrency import YouTubeKit
 
 public enum SourceService {
+    public static func youtubeMatches(for track: SpotifyTrack, query: String? = nil) async throws -> [YouTubeMatch] {
+        let query = (query ?? track.youtubeQuery).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, query.count <= 512 else { throw SourceError.noMatches }
+        var url = URLComponents(string: "https://www.youtube.com/results")!
+        url.queryItems = [URLQueryItem(name: "search_query", value: query), URLQueryItem(name: "hl", value: "en")]
+        let html = try await text(at: url.url!)
+        try Task.checkCancellation()
+        let videos = try SourceMetadata.youtubeSearch(html: html)
+        let matches = YouTubeMatching.ranked(videos, for: track)
+        guard !matches.isEmpty else { throw SourceError.noMatches }
+        return Array(matches.prefix(5))
+    }
+
     public static func spotifyTrack(from link: SourceLink) async throws -> SpotifyTrack {
         let resolved: SourceLink
         if case .spotifyShort(let url) = link {

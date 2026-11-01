@@ -49,9 +49,11 @@ struct DeckView: View {
             Spacer(minLength: 8)
             Menu {
                 Button("Load a link", systemImage: "link") { model.showSource = true }
-                Button("Spotify account", systemImage: "person.crop.circle") {
-                    model.showSpotifyAccount = true
-                    model.showSource = true
+                if model.spotify.isSignedIn {
+                    Button("Spotify account", systemImage: "person.crop.circle") {
+                        model.showSpotifyAccount = true
+                        model.showSource = true
+                    }
                 }
                 Button("Save slowed WAV", systemImage: "square.and.arrow.down") { model.saveMix() }
                     .disabled(model.player.track == nil || model.busy)
@@ -352,6 +354,7 @@ struct SourceSheet: View {
     @Bindable var model: DeckModel
     @State private var showFiles = false
     @FocusState private var editingURL: Bool
+    @FocusState private var editingQuery: Bool
 
     var body: some View {
         NavigationStack {
@@ -364,18 +367,19 @@ struct SourceSheet: View {
                             .autocorrectionDisabled().textContentType(.URL)
                             .focused($editingURL)
                             .padding(14).background(DeckTheme.surface, in: RoundedRectangle(cornerRadius: 8))
+                            .disabled(model.busy)
                             .accessibilityIdentifier("sourceURLField")
                         HStack {
                             PasteButton(payloadType: String.self) { values in
                                 if let value = values.first { model.sourceText = value }
-                            }
+                            }.disabled(model.busy)
                             Spacer()
-                            Button("Load source") { editingURL = false; model.loadLink() }
+                            Button(sourceActionTitle) { editingURL = false; model.loadLink() }
                                 .buttonStyle(.borderedProminent).foregroundStyle(DeckTheme.background)
                                 .frame(minHeight: 44).disabled(model.sourceText.isEmpty || model.busy)
                                 .accessibilityIdentifier("loadSourceButton")
                         }
-                        Text("YouTube audio loads on this iPhone. Spotify input is experimental and may be refused after sign-in.")
+                        Text("Spotify links find matching videos on YouTube. Choose a version to load its audio; no Spotify sign-in is needed.")
                             .font(.subheadline).foregroundStyle(DeckTheme.secondary)
                         if let error = model.error {
                             Text(error).font(.subheadline).foregroundStyle(.red)
@@ -386,40 +390,19 @@ struct SourceSheet: View {
                             Button("Cancel loading") { model.cancelLoading() }.frame(minHeight: 44)
                         }
                     }
-                    Divider().overlay(DeckTheme.line)
-                    DisclosureGroup("Spotify account", isExpanded: $model.showSpotifyAccount) {
-                        VStack(alignment: .leading, spacing: 14) {
-                            if model.spotify.isSignedIn {
+                    if let track = model.matchingTrack { youtubeVersions(for: track) }
+                    if model.spotify.isSignedIn {
+                        Divider().overlay(DeckTheme.line)
+                        DisclosureGroup("Spotify account", isExpanded: $model.showSpotifyAccount) {
+                            VStack(alignment: .leading, spacing: 14) {
                                 Label("Signed in on this iPhone", systemImage: "checkmark.circle")
                                     .font(.subheadline)
-                                if model.spotify.playbackReady {
-                                    Text("Spotify audio connection ready").font(.subheadline)
-                                        .accessibilityIdentifier("spotifyConnectionReady")
-                                }
-                                Button("Check audio connection") { model.spotify.checkConnection() }
-                                    .frame(minHeight: 44).disabled(model.busy)
-                                    .accessibilityIdentifier("spotifyConnectionButton")
+                                Text("YouTube matching does not use this sign-in. You can remove it from this iPhone.")
+                                    .font(.subheadline).foregroundStyle(DeckTheme.secondary)
                                 Button("Sign out", role: .destructive) { model.spotify.signOut() }
                                     .frame(minHeight: 44).disabled(model.busy)
-                            } else {
-                                Text("Use your Premium account to load the original Spotify recording.")
-                                    .font(.subheadline).foregroundStyle(DeckTheme.secondary)
-                                Text("Spotify may label this connection 'Spotify for Desktop'.")
-                                    .font(.caption).foregroundStyle(DeckTheme.secondary)
-                                Button("Sign in to Spotify") { model.spotify.signIn() }
-                                    .buttonStyle(.borderedProminent).foregroundStyle(DeckTheme.background)
-                                    .frame(minHeight: 44).disabled(model.spotify.isSigningIn)
-                                    .accessibilityIdentifier("spotifySignInButton")
-                            }
-                            if let stage = model.spotify.stage {
-                                HStack { ProgressView(); Text(stage).font(.subheadline) }
-                                Button("Cancel sign-in") { model.spotify.cancelSignIn() }.frame(minHeight: 44)
-                            }
-                            if let error = model.spotify.error {
-                                Text(error).font(.subheadline).foregroundStyle(.red)
-                                    .accessibilityIdentifier("spotifySignInError")
-                            }
-                        }.padding(.top, 16)
+                            }.padding(.top, 16)
+                        }
                     }
                     Divider().overlay(DeckTheme.line)
                     Button("Import an audio or video file", systemImage: "folder") { showFiles = true }
@@ -429,6 +412,7 @@ struct SourceSheet: View {
                 }.padding(24).frame(maxWidth: 620).frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
+            .onChange(of: model.sourceText) { _, _ in model.clearYouTubeMatches(); model.error = nil }
             .background(DeckTheme.background).foregroundStyle(DeckTheme.text)
             .navigationTitle("Load a track").navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -441,6 +425,56 @@ struct SourceSheet: View {
                 case .success(let url): model.loadFile(url)
                 case .failure(let error): model.error = error.localizedDescription
                 }
+            }
+        }
+    }
+
+    private var sourceActionTitle: String {
+        switch try? SourceLink(model.sourceText) {
+        case .some(.spotify), .some(.spotifyShort): "Find on YouTube"
+        default: "Load source"
+        }
+    }
+
+    private func youtubeVersions(for track: SpotifyTrack) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Divider().overlay(DeckTheme.line)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(track.title).font(.title3.weight(.medium)).accessibilityIdentifier("spotifyMatchTitle")
+                HStack {
+                    if !track.artist.isEmpty { Text(track.artist) }
+                    if let duration = track.duration { Text(DeckView.time(duration)).monospacedDigit() }
+                }.font(.subheadline).foregroundStyle(DeckTheme.secondary)
+            }
+            if !model.youtubeMatches.isEmpty {
+                Text("Choose a YouTube version").font(.headline)
+                ForEach(model.youtubeMatches) { match in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(match.title).font(.subheadline.weight(.medium)).fixedSize(horizontal: false, vertical: true)
+                        Text(match.author + " · " + DeckView.time(match.duration))
+                            .font(.caption).foregroundStyle(DeckTheme.secondary)
+                        HStack {
+                            Link("Open video", destination: match.url).font(.subheadline).underline().frame(minHeight: 44)
+                            Spacer()
+                            Button("Load audio") { editingURL = false; model.loadYouTubeMatch(match) }
+                                .buttonStyle(.borderedProminent).foregroundStyle(DeckTheme.background)
+                                .frame(minHeight: 44).disabled(model.busy)
+                                .accessibilityIdentifier("youtubeMatch_" + match.id)
+                        }
+                        Divider().overlay(DeckTheme.line)
+                    }
+                }
+            }
+            DisclosureGroup("Edit YouTube search") {
+                VStack(alignment: .leading, spacing: 12) {
+                    TextField("Artist and song", text: $model.youtubeQuery, axis: .vertical)
+                        .lineLimit(2...4).autocorrectionDisabled().textInputAutocapitalization(.never)
+                        .focused($editingQuery)
+                        .padding(14).background(DeckTheme.surface, in: RoundedRectangle(cornerRadius: 8))
+                        .disabled(model.busy).accessibilityIdentifier("youtubeSearchField")
+                    Button("Search again") { editingQuery = false; model.searchYouTubeAgain() }
+                        .frame(minHeight: 44).disabled(model.busy || model.youtubeQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }.padding(.top, 12)
             }
         }
     }

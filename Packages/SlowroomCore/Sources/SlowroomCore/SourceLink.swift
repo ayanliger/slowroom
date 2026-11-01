@@ -73,6 +73,7 @@ public struct SpotifyTrack: Sendable, Equatable {
     public let duration: Double?
     public let url: URL
 
+    public var youtubeQuery: String { [artist, title, "audio"].filter { !$0.isEmpty }.joined(separator: " ") }
 }
 
 public enum SourceError: LocalizedError {
@@ -83,6 +84,8 @@ public enum SourceError: LocalizedError {
     case downloadFailed
     case downloadTooLarge
     case requestFailed(Int)
+    case searchUnavailable
+    case noMatches
 
     public var errorDescription: String? {
         switch self {
@@ -93,6 +96,8 @@ public enum SourceError: LocalizedError {
         case .downloadFailed: "The audio could not be loaded. Try this link again."
         case .downloadTooLarge: "This audio exceeds the 500 MB limit. Choose a shorter upload."
         case .requestFailed(let code): "The source returned HTTP \(code). Try again in a moment."
+        case .searchUnavailable: "YouTube search could not be read. Try again or paste a YouTube link."
+        case .noMatches: "No matching YouTube videos were found. Try a different search or paste a YouTube link."
         }
     }
 }

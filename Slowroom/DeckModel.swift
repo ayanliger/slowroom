@@ -14,6 +14,9 @@ final class DeckModel {
     var error: String?
     var showSource = false
     var showSpotifyAccount = false
+    var matchingTrack: SpotifyTrack?
+    var youtubeMatches: [YouTubeMatch] = []
+    var youtubeQuery = ""
     var exportProgress: Double?
     var exportURL: URL?
     var showExport = false
@@ -129,20 +132,62 @@ final class DeckModel {
         let link: SourceLink
         do { link = try SourceLink(sourceText) }
         catch { self.error = error.localizedDescription; return }
-        if link.requiresSpotifyAccount && !spotify.isSignedIn {
-            showSpotifyAccount = true
-            error = "Sign in to Spotify below, then load your link."
-            return
-        }
-        beginLoading { [mediaDirectory, spotify] stage in
-            switch link {
-            case .youtube(let id):
+        clearYouTubeMatches()
+        switch link {
+        case .youtube(let id):
+            beginLoading { [mediaDirectory] stage in
                 return try await SourceService.loadYouTube(videoID: id, directory: mediaDirectory, stage: stage)
-            case .spotify, .spotifyShort:
-                let token = try await spotify.accessToken()
-                stage("Reading Spotify track")
-                let track = try await SourceService.spotifyTrack(from: link)
-                return try await NativeSpotify.load(track: track, accessToken: token, directory: mediaDirectory, stage: stage)
+            }
+        case .spotify, .spotifyShort:
+            findYouTubeMatches { try await SourceService.spotifyTrack(from: link) }
+        }
+    }
+
+    func clearYouTubeMatches() {
+        matchingTrack = nil
+        youtubeMatches = []
+        youtubeQuery = ""
+    }
+
+    func searchYouTubeAgain() {
+        guard let track = matchingTrack, !busy else { return }
+        findYouTubeMatches({ track }, query: youtubeQuery)
+    }
+
+    func loadYouTubeMatch(_ match: YouTubeMatch) {
+        guard !busy, youtubeMatches.contains(match) else { return }
+        beginLoading { [mediaDirectory] stage in
+            try await SourceService.loadYouTube(videoID: match.id, directory: mediaDirectory, stage: stage)
+        }
+    }
+
+    private func findYouTubeMatches(
+        _ resolve: @escaping @Sendable () async throws -> SpotifyTrack, query: String? = nil
+    ) {
+        cancelLoading()
+        error = nil
+        youtubeMatches = []
+        loadStage = query == nil ? "Reading Spotify track" : "Searching YouTube"
+        let id = loadID
+        loadTask = Task { [weak self] in
+            do {
+                let track = try await resolve()
+                guard let self, self.loadID == id, !Task.isCancelled else { return }
+                self.matchingTrack = track
+                self.youtubeQuery = query ?? track.youtubeQuery
+                self.loadStage = "Searching YouTube"
+                let matches = try await SourceService.youtubeMatches(for: track, query: self.youtubeQuery)
+                guard self.loadID == id, !Task.isCancelled else { return }
+                self.youtubeMatches = matches
+                self.loadID = UUID()
+                self.loadTask = nil
+                self.loadStage = nil
+            } catch {
+                guard let self, self.loadID == id else { return }
+                self.loadID = UUID()
+                self.loadTask = nil
+                self.loadStage = nil
+                if !Task.isCancelled { self.error = error.localizedDescription }
             }
         }
     }
@@ -189,6 +234,7 @@ final class DeckModel {
                 self.loadTask = nil
                 self.loadStage = nil
                 self.showSource = false
+                self.clearYouTubeMatches()
                 self.sourceText = ""
                 if let data = try? JSONEncoder().encode(track) { try? data.write(to: self.sessionFile, options: .atomic) }
                 self.removeOldMedia(keeping: track.fileURL)
@@ -206,6 +252,7 @@ final class DeckModel {
     func cancelLoading() {
         loadID = UUID()
         loadTask?.cancel()
+        loadTask = nil
         loadStage = nil
     }
 
@@ -517,14 +564,5 @@ final class DeckModel {
 
     private func removeOldMedia(keeping: URL?) {
         MediaCache.removeOldFiles(in: mediaDirectory, keeping: keeping)
-    }
-}
-
-private extension SourceLink {
-    var requiresSpotifyAccount: Bool {
-        switch self {
-        case .spotify, .spotifyShort: true
-        case .youtube: false
-        }
     }
 }

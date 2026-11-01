@@ -180,77 +180,36 @@ final class DeckUITests: XCTestCase {
         app.buttons["playPauseButton"].tap()
     }
 
-    func testSpotifyLinkOpensPhoneSignIn() throws {
+    func testSpotifyLinkFindsYouTubeVersionAndPlaysAudio() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting"]
         app.launch()
         app.buttons["Load a link"].tap()
-        app.buttons["Spotify account"].tap()
-        if app.buttons["spotifyConnectionButton"].exists {
-            throw XCTSkip("This device already has a Spotify sign-in.")
-        }
         let field = app.textViews["sourceURLField"].exists ? app.textViews["sourceURLField"] : app.textFields["sourceURLField"]
         field.tap()
         field.typeText("https://open.spotify.com/track/20I6sIOMTCkB6w7ryavxtO")
+        XCTAssertEqual(app.buttons["loadSourceButton"].label, "Find on YouTube")
         app.buttons["loadSourceButton"].tap()
-        XCTAssertTrue(app.staticTexts["sourceError"].label.contains("Sign in to Spotify"))
-        let signIn = app.buttons["spotifySignInButton"]
-        XCTAssertTrue(signIn.waitForExistence(timeout: 5))
-        signIn.tap()
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let consent = springboard.alerts.firstMatch
-        if consent.waitForExistence(timeout: 5), consent.buttons["Continue"].exists {
-            consent.buttons["Continue"].tap()
-        }
-        let browser = XCUIApplication(bundleIdentifier: "com.apple.SafariViewService")
-        XCTAssertTrue(browser.webViews.firstMatch.waitForExistence(timeout: 25))
-        XCTAssertFalse(app.staticTexts["spotifySignInError"].exists)
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        attachment.name = "Spotify system browser sign-in"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-        app.terminate()
-    }
-
-    func testSpotifyAudioConnectionWithSavedSignIn() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["--uitesting"]
-        app.launch()
-        app.buttons["Load a link"].tap()
-        app.buttons["Spotify account"].tap()
-        let check = app.buttons["spotifyConnectionButton"]
-        guard check.exists else { throw XCTSkip("This device has no saved Spotify sign-in.") }
-        check.tap()
-        let ready = app.staticTexts["spotifyConnectionReady"]
-        let failure = app.staticTexts["spotifySignInError"]
-        let deadline = Date().addingTimeInterval(40)
-        while !ready.exists && !failure.exists && Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        }
-        XCTAssertTrue(ready.exists, failure.exists ? failure.label : "Spotify connection did not finish.")
-    }
-
-    func testSpotifyAudioLoadsWithSavedSignIn() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["--uitesting"]
-        app.launch()
-        app.buttons["Load a link"].tap()
-        app.buttons["Spotify account"].tap()
-        guard app.buttons["spotifyConnectionButton"].exists else {
-            throw XCTSkip("This device has no saved Spotify sign-in.")
-        }
-        let field = app.textViews["sourceURLField"].exists ? app.textViews["sourceURLField"] : app.textFields["sourceURLField"]
-        field.tap()
-        field.typeText("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT")
-        app.buttons["loadSourceButton"].tap()
-        let title = app.staticTexts["trackTitle"]
+        let match = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "youtubeMatch_")).firstMatch
         let failure = app.staticTexts["sourceError"]
-        let deadline = Date().addingTimeInterval(200)
-        while !title.exists && !failure.exists && Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(1))
-        }
-        XCTAssertTrue(title.exists, failure.exists ? failure.label : "Spotify audio did not finish loading.")
+        expectation(for: NSPredicate { _, _ in match.exists || failure.exists }, evaluatedWith: app)
+        waitForExpectations(timeout: 60)
+        XCTAssertTrue(match.exists, failure.exists ? failure.label : "No YouTube matches appeared.")
+        guard match.exists else { return }
+        XCTAssertEqual(app.staticTexts["spotifyMatchTitle"].label, "Call Me Maybe")
+        XCTAssertFalse(app.buttons["spotifySignInButton"].exists)
+        let matches = XCTAttachment(screenshot: app.screenshot())
+        matches.name = "YouTube versions for a Spotify track"
+        matches.lifetime = .keepAlways
+        add(matches)
+        match.tap()
+        let title = app.staticTexts["trackTitle"]
+        expectation(for: NSPredicate { _, _ in title.exists || failure.exists }, evaluatedWith: app)
+        waitForExpectations(timeout: 120)
+        XCTAssertTrue(title.exists, failure.exists ? failure.label : "The selected YouTube audio did not load.")
         guard title.exists else { return }
+        XCTAssertTrue(title.label.localizedCaseInsensitiveContains("Call Me Maybe"))
+        XCTAssertTrue(app.staticTexts["YOUTUBE"].exists)
         app.buttons["playPauseButton"].tap()
         XCTAssertEqual(app.buttons["playPauseButton"].label, "Pause")
         expectation(for: NSPredicate(format: "label != %@", "0:00"), evaluatedWith: app.staticTexts["currentPosition"])
@@ -258,10 +217,15 @@ final class DeckUITests: XCTestCase {
         app.sliders["speedSlider"].adjust(toNormalizedSliderPosition: 0.4)
         XCTAssertEqual(app.buttons["playPauseButton"].label, "Pause")
         app.buttons["playPauseButton"].tap()
-        let attachment = XCTAttachment(screenshot: app.screenshot())
-        attachment.name = "Spotify audio on the physical iPhone"
-        attachment.lifetime = .keepAlways
-        add(attachment)
+        let audio = XCTAttachment(screenshot: app.screenshot())
+        audio.name = "Spotify match playing from YouTube"
+        audio.lifetime = .keepAlways
+        add(audio)
+        app.buttons["trackOptions"].tap()
+        app.buttons["Load a link"].tap()
+        XCTAssertTrue(app.buttons["loadSourceButton"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["spotifyMatchTitle"].exists)
+        XCTAssertFalse(match.exists)
     }
 
 }
