@@ -311,13 +311,19 @@ public actor AudioLibrary {
         if let copyError { throw copyError }
     }
 
-    private static func fingerprint(_ url: URL) throws -> String {
+    static func fingerprint(_ url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         var hash = SHA256()
-        while let data = try handle.read(upToCount: 1_048_576), !data.isEmpty {
-            try Task.checkCancellation()
-            hash.update(data: data)
+        while true {
+            // Foundation retains read buffers until its pool drains, which can span the whole scan.
+            let hasBytes = try autoreleasepool {
+                try Task.checkCancellation()
+                guard let data = try handle.read(upToCount: 1_048_576), !data.isEmpty else { return false }
+                hash.update(data: data)
+                return true
+            }
+            if !hasBytes { break }
         }
         return hash.finalize().map { String(format: "%02x", $0) }.joined()
     }

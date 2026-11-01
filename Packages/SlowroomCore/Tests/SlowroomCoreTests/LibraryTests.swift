@@ -1,10 +1,28 @@
 import AVFoundation
+import Darwin
 import Foundation
 import Testing
 @testable import SlowroomCore
 
 @Suite(.serialized)
 struct LibraryTests {
+    @Test func hashingLargeFilesReleasesReadBuffers() throws {
+        let root = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("large.wav")
+        FileManager.default.createFile(atPath: source.path, contents: nil)
+        let writer = try FileHandle(forWritingTo: source)
+        try writer.truncate(atOffset: 256 * 1_024 * 1_024)
+        try writer.close()
+        try autoreleasepool {
+            let before = try residentBytes()
+            let digest = try AudioLibrary.fingerprint(source)
+            let after = try residentBytes()
+            #expect(digest == "a6d72ac7690f53be6ae46ba88506bd97302a093f7108472bd9efc3cefda06484")
+            #expect(after < before + 64 * 1_024 * 1_024)
+        }
+    }
+
     @Test func deletesOnlyVerifiedOriginalAndPreservesLibraryCopy() async throws {
         let root = try folder()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -240,6 +258,18 @@ struct LibraryTests {
 
     private func makeLibrary(_ root: URL) throws -> AudioLibrary {
         try AudioLibrary(directory: root.appendingPathComponent("Slowroom Library"), catalogURL: root.appendingPathComponent("support/library.json"))
+    }
+
+    private func residentBytes() throws -> UInt64 {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout.size(ofValue: info) / MemoryLayout<integer_t>.size)
+        let status = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        try #require(status == KERN_SUCCESS)
+        return info.resident_size
     }
 
     private func folder() throws -> URL {

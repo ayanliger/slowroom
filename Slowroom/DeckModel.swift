@@ -481,16 +481,37 @@ final class DeckModel {
             do {
                 let folder = libraryDirectory.deletingLastPathComponent().appendingPathComponent("fixtures")
                 let demo = try await Task.detached { try DemoAudio.create(in: folder) }.value
-                _ = try await library.importFile(demo.fileURL, kind: .source, title: demo.title, artist: "Slowroom")
                 let mix = folder.appendingPathComponent("mix.wav")
                 try await Task.detached {
                     try AudioRenderer.render(input: demo.fileURL, output: mix, settings: EffectSettings())
                 }.value
+                if ProcessInfo.processInfo.arguments.contains("--large-cleanup-fixtures") {
+                    try await Task.detached {
+                        try Self.padTestAudio(mix)
+                    }.value
+                }
+                _ = try await library.importFile(demo.fileURL, kind: .source, title: demo.title, artist: "Slowroom")
                 _ = try await library.importFile(mix, kind: .mix, title: "Evening study (Slowed + Reverb)", artist: "Slowroom")
                 await refreshLibrary()
             } catch { self.error = error.localizedDescription }
             libraryStage = nil
         }
+    }
+
+    private nonisolated static func padTestAudio(_ url: URL) throws {
+        let file = try FileHandle(forUpdating: url)
+        defer { try? file.close() }
+        guard try file.read(upToCount: 4) == Data("RIFF".utf8) else { throw AudioError.unsupportedFormat }
+        let end = try file.seekToEnd()
+        // A sparse JUNK chunk exercises multi-gigabyte scans without hours of test audio.
+        let padding: UInt32 = 3_584 * 1_024 * 1_024
+        var chunkSize = padding.littleEndian
+        try file.write(contentsOf: Data("JUNK".utf8))
+        try withUnsafeBytes(of: &chunkSize) { try file.write(contentsOf: Data($0)) }
+        try file.truncate(atOffset: end + 8 + UInt64(padding))
+        try file.seek(toOffset: 4)
+        var riffSize = UInt32(end + UInt64(padding)).littleEndian
+        try withUnsafeBytes(of: &riffSize) { try file.write(contentsOf: Data($0)) }
     }
     #endif
 

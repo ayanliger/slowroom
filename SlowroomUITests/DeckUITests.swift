@@ -4,18 +4,18 @@ import XCTest
 final class DeckUITests: XCTestCase {
     func testOriginalCleanupPreservesLibraryPlayback() {
         let app = XCUIApplication()
-        app.launchArguments = ["--uitesting", "--reset-test-library", "--seed-library"]
+        app.launchArguments = ["--uitesting", "--reset-test-library", "--seed-library", "--large-cleanup-fixtures"]
         app.launch()
         app.tabBars.buttons["Library"].tap()
         let mix = app.buttons["libraryTrack_Evening study (Slowed + Reverb)"]
-        XCTAssertTrue(mix.waitForExistence(timeout: 30))
+        XCTAssertTrue(mix.waitForExistence(timeout: 120))
         app.buttons["libraryOptions"].tap()
         app.buttons["Delete imported originals"].tap()
         app.buttons["findTestOriginals"].tap()
-        XCTAssertTrue(app.staticTexts["cleanupMatchedCount"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["cleanupMatchedCount"].waitForExistence(timeout: 60))
         XCTAssertEqual(app.staticTexts["cleanupMatchedCount"].label, "2 matched originals")
         app.buttons["deleteMatchedOriginals"].tap()
-        XCTAssertTrue(app.staticTexts["cleanupResultCount"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["cleanupResultCount"].waitForExistence(timeout: 60))
         XCTAssertEqual(app.staticTexts["cleanupResultCount"].label, "2 originals deleted")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Verified original cleanup"
