@@ -17,35 +17,84 @@ final class DeckModel {
     var exportProgress: Double?
     var exportURL: URL?
     var showExport = false
+    var selectedTab = 0
+    var libraryItems: [SlowroomCore.LibraryItem] = []
+    var libraryStage: String?
+    var libraryReport: LibraryImportReport?
+    var showLibraryImport = false
+    var currentLibraryID: UUID?
+    var libraryNotice: String?
+    let libraryDirectory: URL
+    private var library: AudioLibrary?
+    private var libraryTask: Task<Void, Never>?
+    private var libraryOperationID = UUID()
+    private var queue: [UUID] = []
 
     private let mediaDirectory: URL
     private let sessionFile: URL
     private var loadTask: Task<Void, Never>?
     private var renderTask: Task<URL, Error>?
+    private var finishExportTask: Task<Void, Never>?
     private var loadID = UUID()
     private var remoteTargets: [Any] = []
+    private var effectsKey: String {
+        ProcessInfo.processInfo.arguments.contains("--uitesting") ? "testEffects" : "effects"
+    }
 
     init() {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        mediaDirectory = caches.appendingPathComponent("SlowroomMedia")
-        sessionFile = caches.appendingPathComponent("slowroom-session.json")
-        if let data = UserDefaults.standard.data(forKey: "effects"),
+        let testing = ProcessInfo.processInfo.arguments.contains("--uitesting")
+        let workspace = testing ? caches.appendingPathComponent("SlowroomUITests") : caches
+        mediaDirectory = workspace.appendingPathComponent("SlowroomMedia")
+        sessionFile = workspace.appendingPathComponent("slowroom-session.json")
+        let documents = testing ? caches.appendingPathComponent("LibraryUITests")
+            : FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        #if DEBUG
+        if testing && ProcessInfo.processInfo.arguments.contains("--reset-test-library") {
+            try? FileManager.default.removeItem(at: documents)
+        }
+        #endif
+        libraryDirectory = documents.appendingPathComponent("Slowroom Library")
+        let support = testing ? documents : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        do { library = try AudioLibrary(directory: libraryDirectory, catalogURL: support.appendingPathComponent("Slowroom/library.json")) }
+        catch { self.error = error.localizedDescription }
+        if let data = UserDefaults.standard.data(forKey: effectsKey),
            let effects = try? JSONDecoder().decode(EffectSettings.self, from: data) {
             player.update(effects)
         }
         configureRemoteControls()
+        player.onPlaybackEnded = { [weak self] in self?.advanceQueue() }
+        Task {
+            await refreshLibrary()
+            if !testing, !ProcessInfo.processInfo.arguments.contains("--demo"),
+               let saved = UserDefaults.standard.string(forKey: "lastLibraryTrack"),
+               let item = libraryItems.first(where: { $0.id.uuidString == saved }) {
+                do {
+                    try player.load(item.audioTrack(in: libraryDirectory))
+                    player.compareOriginal(true)
+                    currentLibraryID = item.id
+                    queue = [item.id]
+                } catch { self.error = error.localizedDescription }
+            }
+        }
+        #if DEBUG
+        if testing && ProcessInfo.processInfo.arguments.contains("--seed-library") {
+            seedTestLibrary()
+        }
+        #endif
         if ProcessInfo.processInfo.arguments.contains("--demo") {
             loadDemo()
         } else if !ProcessInfo.processInfo.arguments.contains("--uitesting"),
                   let data = try? Data(contentsOf: sessionFile),
                   let track = try? JSONDecoder().decode(AudioTrack.self, from: data),
-                  track.fileURL.deletingLastPathComponent() == mediaDirectory,
+                  track.fileURL.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path
+                    == mediaDirectory.resolvingSymlinksInPath().standardizedFileURL.path,
                   FileManager.default.fileExists(atPath: track.fileURL.path) {
             try? player.load(track)
         }
     }
 
-    var busy: Bool { loadStage != nil || exportProgress != nil || spotify.isSigningIn }
+    var busy: Bool { loadStage != nil || exportProgress != nil || libraryStage != nil || spotify.isSigningIn }
 
     func change(_ keyPath: WritableKeyPath<EffectSettings, Float>, to value: Float) {
         var settings = player.settings
@@ -55,7 +104,7 @@ final class DeckModel {
 
     func apply(_ settings: EffectSettings) {
         player.update(settings)
-        if let data = try? JSONEncoder().encode(player.settings) { UserDefaults.standard.set(data, forKey: "effects") }
+        if let data = try? JSONEncoder().encode(player.settings) { UserDefaults.standard.set(data, forKey: effectsKey) }
         updateNowPlaying()
     }
 
@@ -122,6 +171,12 @@ final class DeckModel {
                     return
                 }
                 try self.player.load(track)
+                self.player.compareOriginal(false)
+                self.currentLibraryID = nil
+                self.queue = []
+                if !ProcessInfo.processInfo.arguments.contains("--uitesting") {
+                    UserDefaults.standard.removeObject(forKey: "lastLibraryTrack")
+                }
                 self.loadID = UUID()
                 self.loadTask = nil
                 self.loadStage = nil
@@ -146,8 +201,8 @@ final class DeckModel {
         loadStage = nil
     }
 
-    func saveMix() {
-        guard let track = player.track, exportProgress == nil else { return }
+    func saveMix(toLibrary: Bool = false) {
+        guard let track = player.track, !busy else { return }
         let settings = player.settings
         let directory = mediaDirectory.deletingLastPathComponent().appendingPathComponent("SlowroomExports")
         let cleaned = track.title.components(separatedBy: CharacterSet.alphanumerics.union(.whitespaces).inverted)
@@ -169,25 +224,43 @@ final class DeckModel {
             }
             return output
         }
-        Task { [weak self] in
+        finishExportTask = Task { [weak self] in
             guard let self, let task = self.renderTask else { return }
             do {
                 let url = try await task.value
+                if toLibrary, let library = self.library {
+                    self.libraryStage = "Adding your mix"
+                    let title = track.title.localizedCaseInsensitiveContains("slowed") ? track.title : track.title + " (Slowed + Reverb)"
+                    _ = try await library.importFile(url, kind: .mix, title: title, artist: track.author,
+                                                     sourceURL: track.sourceURL, effects: settings)
+                    await self.refreshLibrary()
+                    self.libraryStage = nil
+                    self.libraryNotice = "Mix saved to your library."
+                    try? FileManager.default.removeItem(at: url)
+                } else {
+                    self.exportURL = url
+                    self.showExport = true
+                }
                 self.exportProgress = nil
-                self.exportURL = url
-                self.showExport = true
             } catch {
                 self.exportProgress = nil
+                self.libraryStage = nil
                 if !(error is CancellationError) { self.error = error.localizedDescription }
             }
             self.renderTask = nil
+            self.finishExportTask = nil
         }
     }
 
-    func cancelExport() { renderTask?.cancel() }
+    func cancelExport() { renderTask?.cancel(); finishExportTask?.cancel() }
 
     func clearTrack() {
         player.clear()
+        currentLibraryID = nil
+        queue = []
+        if !ProcessInfo.processInfo.arguments.contains("--uitesting") {
+            UserDefaults.standard.removeObject(forKey: "lastLibraryTrack")
+        }
         try? FileManager.default.removeItem(at: sessionFile)
         removeOldMedia(keeping: nil)
         updateNowPlaying()
@@ -233,11 +306,141 @@ final class DeckModel {
             Task { @MainActor in self?.player.seek(to: time); self?.updateNowPlaying() }
             return .success
         })
+        remoteTargets.append(center.nextTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.advanceQueue() }
+            return .success
+        })
+        remoteTargets.append(center.previousTrackCommand.addTarget { [weak self] _ in
+            Task { @MainActor in self?.previousTrack() }
+            return .success
+        })
     }
 
+    func refreshLibrary() async {
+        libraryItems = await library?.allItems() ?? []
+    }
+
+    func importLibrary(_ urls: [URL], kind: LibraryKind, optimize: Bool) {
+        guard let library, !busy else { return }
+        libraryReport = nil
+        libraryStage = "Reading selected files"
+        libraryOperationID = UUID()
+        let operationID = libraryOperationID
+        showLibraryImport = false
+        libraryTask = Task { [weak self] in
+            let report = await library.importFiles(urls, kind: kind, optimize: optimize) { [weak self] message in
+                Task { @MainActor in
+                    guard let self, self.libraryOperationID == operationID, self.libraryStage != nil else { return }
+                    self.libraryStage = message
+                }
+            }
+            guard let self else { return }
+            await self.refreshLibrary()
+            self.libraryStage = nil
+            self.libraryReport = report
+            self.libraryTask = nil
+        }
+    }
+
+    func cancelLibraryImport() { libraryTask?.cancel() }
+
+    func keepCurrentSource() {
+        guard let library, let track = player.track, !busy else { return }
+        libraryStage = "Saving source"
+        libraryTask = Task { [weak self] in
+            do {
+                _ = try await library.importFile(track.fileURL, kind: .source, title: track.title,
+                                                 artist: track.author, sourceURL: track.sourceURL)
+                await self?.refreshLibrary()
+                self?.libraryNotice = "Source saved to your library."
+            } catch { self?.error = error.localizedDescription }
+            self?.libraryStage = nil
+            self?.libraryTask = nil
+        }
+    }
+
+    func playLibrary(_ item: SlowroomCore.LibraryItem, queue items: [SlowroomCore.LibraryItem]? = nil, edit: Bool = false) {
+        guard !busy else { return }
+        do {
+            try player.load(item.audioTrack(in: libraryDirectory))
+            player.compareOriginal(!edit)
+            player.isLooping = false
+            currentLibraryID = item.id
+            if !ProcessInfo.processInfo.arguments.contains("--uitesting") {
+                UserDefaults.standard.set(item.id.uuidString, forKey: "lastLibraryTrack")
+            }
+            queue = (items ?? [item]).map(\.id)
+            if edit { selectedTab = 0 }
+            else { try player.play() }
+            updateNowPlaying()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    var hasNextTrack: Bool {
+        guard let id = currentLibraryID, let index = queue.firstIndex(of: id) else { return false }
+        return index + 1 < queue.count
+    }
+
+    func advanceQueue() {
+        guard hasNextTrack, let id = currentLibraryID, let index = queue.firstIndex(of: id),
+              let next = libraryItems.first(where: { $0.id == queue[index + 1] }) else { updateNowPlaying(); return }
+        let ordered = queue.compactMap { id in libraryItems.first { $0.id == id } }
+        playLibrary(next, queue: ordered)
+    }
+
+    func previousTrack() {
+        guard player.position < 3, let id = currentLibraryID, let index = queue.firstIndex(of: id), index > 0,
+              let previous = libraryItems.first(where: { $0.id == queue[index - 1] }) else {
+            player.seek(to: 0); updateNowPlaying(); return
+        }
+        let ordered = queue.compactMap { id in libraryItems.first { $0.id == id } }
+        playLibrary(previous, queue: ordered)
+    }
+
+    func renameLibrary(_ item: SlowroomCore.LibraryItem, title: String, artist: String) async -> Bool {
+        guard let library, !busy else { return false }
+        let active = currentLibraryID == item.id
+        let resume = active && player.isPlaying
+        let position = player.position
+        let original = player.isOriginal
+        if active { player.pause() }
+        do {
+            let updated = try await library.rename(item.id, title: title, artist: artist)
+            await refreshLibrary()
+            if active {
+                try player.load(updated.audioTrack(in: libraryDirectory))
+                player.compareOriginal(original)
+                player.seek(to: position)
+                if resume { try player.play() }
+                updateNowPlaying()
+            }
+            return true
+        } catch { self.error = error.localizedDescription; return false }
+    }
+
+    #if DEBUG
+    private func seedTestLibrary() {
+        guard let library else { return }
+        libraryStage = "Preparing test library"
+        Task {
+            do {
+                let folder = libraryDirectory.deletingLastPathComponent().appendingPathComponent("fixtures")
+                let demo = try await Task.detached { try DemoAudio.create(in: folder) }.value
+                _ = try await library.importFile(demo.fileURL, kind: .source, title: demo.title, artist: "Slowroom")
+                let mix = folder.appendingPathComponent("mix.wav")
+                try await Task.detached {
+                    try AudioRenderer.render(input: demo.fileURL, output: mix, settings: EffectSettings())
+                }.value
+                _ = try await library.importFile(mix, kind: .mix, title: "Evening study (Slowed + Reverb)", artist: "Slowroom")
+                await refreshLibrary()
+            } catch { self.error = error.localizedDescription }
+            libraryStage = nil
+        }
+    }
+    #endif
+
     private func removeOldMedia(keeping: URL?) {
-        let files = (try? FileManager.default.contentsOfDirectory(at: mediaDirectory, includingPropertiesForKeys: nil)) ?? []
-        for file in files where file != keeping { try? FileManager.default.removeItem(at: file) }
+        MediaCache.removeOldFiles(in: mediaDirectory, keeping: keeping)
     }
 }
 

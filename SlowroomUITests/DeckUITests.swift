@@ -2,6 +2,79 @@ import XCTest
 
 @MainActor
 final class DeckUITests: XCTestCase {
+    func testLibraryPlaybackRenameAndPersistence() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--reset-test-library", "--seed-library"]
+        app.launch()
+        app.tabBars.buttons["Library"].tap()
+        let mixTitle = "Evening study (Slowed + Reverb)"
+        let mix = app.buttons["libraryTrack_" + mixTitle]
+        XCTAssertTrue(mix.waitForExistence(timeout: 30))
+        mix.tap()
+        XCTAssertEqual(app.buttons["libraryPlayPause"].label, "Pause")
+        XCTAssertTrue(app.staticTexts["libraryPlaybackMode"].label.contains("AS SAVED"))
+        expectation(for: NSPredicate(format: "label != %@", "0:00"), evaluatedWith: app.staticTexts["libraryPosition"])
+        waitForExpectations(timeout: 5)
+        XCTAssertTrue(app.buttons["libraryNext"].isEnabled)
+        app.sliders["librarySeekSlider"].adjust(toNormalizedSliderPosition: 1)
+        expectation(for: NSPredicate(format: "label == %@", "Evening study"), evaluatedWith: app.staticTexts["libraryNowPlayingTitle"])
+        waitForExpectations(timeout: 8)
+        XCTAssertEqual(app.staticTexts["libraryNowPlayingTitle"].label, "Evening study")
+        XCTAssertEqual(app.buttons["libraryPlayPause"].label, "Pause")
+        app.buttons["libraryPlayPause"].tap()
+        app.buttons["Options for " + mixTitle].tap()
+        app.buttons["Rename"].tap()
+        let title = app.textFields["renameTitle"]
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        title.tap()
+        title.press(forDuration: 1.2)
+        if app.menuItems["Select All"].waitForExistence(timeout: 2) { app.menuItems["Select All"].tap() }
+        else {
+            title.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: mixTitle.count))
+        }
+        title.typeText("Evening mix")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.buttons["libraryTrack_Evening mix"].waitForExistence(timeout: 5))
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Local library and as-saved playback"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        app.terminate()
+        app.launchArguments = ["--uitesting"]
+        app.launch()
+        app.tabBars.buttons["Library"].tap()
+        XCTAssertTrue(app.buttons["libraryTrack_Evening mix"].waitForExistence(timeout: 5))
+        app.buttons["libraryTrack_Evening mix"].tap()
+        XCTAssertTrue(app.staticTexts["libraryPlaybackMode"].label.contains("AS SAVED"))
+        app.buttons["libraryPlayPause"].tap()
+    }
+
+    func testLibraryFolderPickerAndSaveMix() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitesting", "--reset-test-library", "--demo"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["trackTitle"].waitForExistence(timeout: 15))
+        app.scrollViews.firstMatch.swipeUp()
+        app.scrollViews.firstMatch.swipeUp()
+        let save = app.buttons["saveLibraryMix"]
+        XCTAssertTrue(save.waitForExistence(timeout: 3))
+        save.tap()
+        let failure = app.alerts["Could not complete the action"]
+        if failure.waitForExistence(timeout: 2) {
+            XCTFail(failure.debugDescription)
+            return
+        }
+        app.tabBars.buttons["Library"].tap()
+        XCTAssertTrue(app.buttons["libraryTrack_Evening study (Slowed + Reverb)"].waitForExistence(timeout: 30))
+        app.buttons["libraryImportToolbar"].tap()
+        app.buttons["chooseLibraryFolder"].tap()
+        XCTAssertTrue(app.navigationBars["FullDocumentManagerViewControllerNavigationBar"].waitForExistence(timeout: 10))
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Select a folder from iPhone Files"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testLiveControlsAndOriginalComparison() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitesting", "--demo"]

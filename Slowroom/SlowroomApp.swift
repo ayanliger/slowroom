@@ -6,7 +6,7 @@ struct SlowroomApp: App {
 
     var body: some Scene {
         WindowGroup {
-            DeckView(model: model)
+            SlowroomRootView(model: model)
                 .preferredColorScheme(.dark)
                 .tint(DeckTheme.amber)
         }

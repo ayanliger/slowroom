@@ -69,6 +69,7 @@ public enum DemoAudio {
             try file.write(from: buffer)
             offset += count
         }
+        file.close()
         return try AudioTrack.inspect(url: url, title: "Evening study", author: "Built-in synth demo")
     }
 }

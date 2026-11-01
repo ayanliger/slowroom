@@ -10,6 +10,7 @@ public final class AudioPlayer {
     public private(set) var isOriginal = false
     public private(set) var position: Double = 0
     public var isLooping = false
+    @ObservationIgnored public var onPlaybackEnded: (@MainActor () -> Void)?
 
     @ObservationIgnored private var graph: AudioGraph?
     @ObservationIgnored private var scheduledStart: Double = 0
@@ -131,6 +132,7 @@ public final class AudioPlayer {
                     self.isPlaying = false
                     self.position = self.duration
                     self.ticker?.cancel()
+                    self.onPlaybackEnded?()
                 }
             }
         }

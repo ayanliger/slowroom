@@ -37,22 +37,6 @@ struct DeckView: View {
         .background(DeckTheme.background)
         .foregroundStyle(DeckTheme.text)
         .safeAreaInset(edge: .bottom, spacing: 0) { transport }
-        .sheet(isPresented: $model.showSource) { SourceSheet(model: model) }
-        .sheet(isPresented: $model.showExport) {
-            if let url = model.exportURL { SaveAudioView(url: url) }
-        }
-        .alert("Could not complete the action", isPresented: Binding(
-            get: { model.error != nil && !model.showSource },
-            set: { if !$0 { model.error = nil } }
-        )) {
-            Button("OK") { model.error = nil }
-        } message: { Text(model.error ?? "") }
-        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { model.interruption($0) }
-        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { model.routeChanged($0) }
-        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.mediaServicesWereResetNotification)) { _ in
-            model.player.recoverAfterAudioChange()
-        }
-        .onChange(of: model.player.isPlaying) { model.updateNowPlaying() }
     }
 
     private var header: some View {
@@ -70,6 +54,8 @@ struct DeckView: View {
                     model.showSource = true
                 }
                 Button("Save slowed WAV", systemImage: "square.and.arrow.down") { model.saveMix() }
+                    .disabled(model.player.track == nil || model.busy)
+                Button("Keep source in library", systemImage: "music.note.list") { model.keepCurrentSource() }
                     .disabled(model.player.track == nil || model.busy)
                 Button("Clear track", systemImage: "xmark", role: .destructive) { model.clearTrack() }
                     .disabled(model.player.track == nil || model.busy)
@@ -246,10 +232,13 @@ struct DeckView: View {
                     Button("Cancel render") { model.cancelExport() }.frame(minHeight: 44)
                 }
             } else {
-                Button { model.saveMix() } label: {
-                    Label("Save slowed WAV", systemImage: "square.and.arrow.down").frame(maxWidth: .infinity, minHeight: 44)
+                Button { model.saveMix(toLibrary: true) } label: {
+                    Label("Save mix to library", systemImage: "music.note.list").frame(maxWidth: .infinity, minHeight: 44)
                 }.buttonStyle(.bordered).disabled(model.player.track == nil || model.busy)
-                    .accessibilityIdentifier("exportButton")
+                    .accessibilityIdentifier("saveLibraryMix")
+                if let notice = model.libraryNotice {
+                    Text(notice).font(.caption).foregroundStyle(DeckTheme.amber)
+                }
             }
         }
     }
@@ -359,7 +348,7 @@ private struct WaveformView: View {
     }
 }
 
-private struct SourceSheet: View {
+struct SourceSheet: View {
     @Bindable var model: DeckModel
     @State private var showFiles = false
     @FocusState private var editingURL: Bool
@@ -386,7 +375,7 @@ private struct SourceSheet: View {
                                 .frame(minHeight: 44).disabled(model.sourceText.isEmpty || model.busy)
                                 .accessibilityIdentifier("loadSourceButton")
                         }
-                        Text("Spotify and YouTube audio load directly onto this iPhone.")
+                        Text("YouTube audio loads on this iPhone. Spotify input is experimental and may be refused after sign-in.")
                             .font(.subheadline).foregroundStyle(DeckTheme.secondary)
                         if let error = model.error {
                             Text(error).font(.subheadline).foregroundStyle(.red)
@@ -457,7 +446,7 @@ private struct SourceSheet: View {
     }
 }
 
-private struct SaveAudioView: UIViewControllerRepresentable {
+struct SaveAudioView: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
         UIDocumentPickerViewController(forExporting: [url], asCopy: true)

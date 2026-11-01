@@ -2,7 +2,7 @@
 
 [![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](Packages/SlowroomCore/Package.swift) [![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-147EFB?logo=swift&logoColor=white)](https://developer.apple.com/xcode/swiftui/) [![iOS 18+](https://img.shields.io/badge/iOS-18%2B-000000?logo=apple&logoColor=white)](Slowroom.xcodeproj/project.pbxproj) [![Xcode 27.1](https://img.shields.io/badge/Xcode-27.1-147EFB?logo=xcode&logoColor=white)](https://developer.apple.com/xcode/) [![Rust 2024](https://img.shields.io/badge/Rust-2024-CE422B?logo=rust&logoColor=white)](NativeSpotify/Cargo.toml) [![Personal prototype](https://img.shields.io/badge/State-personal_prototype-9A6700?logo=apple&logoColor=white&labelColor=555555)](#status)
 
-A personal iPhone audio deck with live speed, pitch and reverb controls for YouTube audio and local files. Original comparison, pitch preservation, looping and WAV export are included. Spotify sign-in works, but full Spotify playback is currently blocked by audio-key refusals for the tested Premium account; see [Status](#status). The graphite and amber interface takes its spacing and numeric readouts from studio rack effects.
+A personal iPhone audio deck with live speed, pitch and reverb controls for YouTube audio and local files. A local library stores sources and finished mixes, with search, queued playback, renaming and Files import. Spotify sign-in works, but full Spotify playback is currently blocked by audio-key refusals for the tested Premium account; see [Status](#status). The graphite and amber interface takes its spacing and numeric readouts from studio rack effects.
 
 ## Sources
 
@@ -13,6 +13,20 @@ A personal iPhone audio deck with live speed, pitch and reverb controls for YouT
 | Audio or video file | The selected local file | Audio that AVFoundation can decode |
 
 The Spotify integration requests the linked Spotify recording. YouTube extraction runs on the iPhone through YouTubeKit. The audio loads into a local file before the live effect controls become available. Both service integrations are unofficial and can stop working when their services change; the official playback SDKs do not expose the decoded audio this app needs.
+
+## Local library
+
+Open Library > Import to select audio files or a folder from Files. Subfolders are scanned for audio and video. Existing mixes belong in Slowed + Reverb; recordings for later editing belong in Sources. Every library track plays at its saved speed without added pitch or reverb. Open in deck applies the deck settings for further editing, and Save mix to library renders a separate M4A copy; WAV export remains available in the deck menu.
+
+Library copies are stored in Files > On My iPhone > Slowroom > Slowroom Library, with separate Slowed + Reverb and Sources folders. Titles and artists come from embedded tags when available, otherwise filenames; Rename updates the catalog and filename together. Imports preserve the selected originals, skip byte-identical duplicates and report failures per file. The catalog uses relative paths in Application Support so app-container changes do not invalidate its entries. Moving or renaming library files outside the app requires importing them again.
+
+With Reduce lossless file sizes enabled, WAV, AIFF, FLAC and ALAC are encoded as AAC in M4A at 256 kb/s for stereo or 128 kb/s for mono. Sample rates above 48 kHz are converted to 48 kHz. Existing MP3 and AAC files are copied without re-encoding. Converted files are decoded and checked for matching duration before insertion, and the smaller copy is retained. The import report shows measured original and stored sizes; originals are never deleted by the importer.
+
+## Spotify alternatives investigated
+
+The [official iOS SDK](https://developer.spotify.com/documentation/ios) controls the Spotify app rather than exposing audio samples. The embedded Media Delivery API separates fetching from decoding, but [access requires a hardware company application and approval](https://developer.spotify.com/documentation/commercial-hardware/onboarding). Dotify's [Web AAC fallback](https://github.com/AsHfIEXE/Dotify/blob/main/dotify/interface/audio.py) requires a supplied Widevine device file; its code does not provide a ready iPhone alternative to the current login.
+
+[Spotdown](https://spotdown.org/en2) resolves a Spotify link without asking the user to sign in. Its public client sends the link to its own download endpoint, and its footer states that it uses third-party services. The upstream recording source has not been verified. A server-backed downloader can be used from an iPhone without a Mac helper, but it is different from extracting Spotify audio on the phone. Files downloaded in Safari can be imported into the local library.
 
 ## Build and run
 
@@ -31,10 +45,12 @@ cargo test --manifest-path NativeSpotify/Cargo.toml --locked -p librespot-core -
 swift run --package-path Packages/SlowroomCore --scratch-path build/core SourceProbe 'YOUTUBE_URL'
 ```
 
-The Swift tests measure rendered duration, frequency and reverb tails using generated signals. The Xcode scheme includes UI checks for live controls, input errors, WAV export and a public YouTube sample. Rust tests cover native job ownership, cancellation, track IDs and error redaction. `SourceProbe` checks Spotify metadata or downloads a YouTube sample; Spotify authentication and audio require the iPhone app. The vendored sysinfo and librespot-core compatibility changes are documented in [NativeSpotify/vendor/README.md](NativeSpotify/vendor/README.md).
+The Swift tests measure rendered duration, frequency and reverb tails using generated signals. Library checks cover AAC size and duration, resampling, duplicate detection, filename collisions, persistence and failed catalog writes. The Xcode scheme includes UI checks for library playback and renaming, folder selection, live controls, input errors, WAV export and a public YouTube sample. Rust tests cover native job ownership, cancellation, track IDs and error redaction. `SourceProbe` checks Spotify metadata or downloads a YouTube sample; Spotify authentication and audio require the iPhone app. The vendored sysinfo and librespot-core compatibility changes are documented in [NativeSpotify/vendor/README.md](NativeSpotify/vendor/README.md).
 
 ## Status
 
-Personal prototype, version 0.1.0, with no tagged release or selected license for the original source. The phone-only build is signed and installed on a physical iPhone. Spotify browser sign-in and the native audio-session connection are verified on that device. Full Spotify playback failed on two tracks for the tested Premium account; the second test still received audio-key refusal code 1 after the bounded retry sequence. This matches the unresolved [librespot issue 1649](https://github.com/librespot-org/librespot/issues/1649). Live audio controls and YouTube import/playback passed on the physical iPhone; rendered output and Files export passed macOS and simulator checks. Dependency versions are pinned in the Swift package and Cargo lockfile; license notices are in [ThirdPartyNotices.txt](Slowroom/ThirdPartyNotices.txt).
+Personal prototype, version 0.1.0, with no tagged release or selected license for the original source. The phone-only build is signed and installed on a physical iPhone. Spotify browser sign-in and the native audio-session connection are verified on that device. Full Spotify playback failed on two tracks for the tested Premium account; the second test still received audio-key refusal code 1 after the bounded retry sequence, matching the unresolved [librespot issue 1649](https://github.com/librespot-org/librespot/issues/1649).
 
-The app retains the current source in its local cache and replaces older sources when another track loads. Exported WAV files go to the location selected in Files. Spotify tokens stay in the iPhone Keychain and are removed when signing out; reusable playback credentials are held in memory. No audio upload or publishing feature is included.
+Live controls and YouTube import/playback passed on the physical iPhone. Library playback, automatic queue advancement, renaming, persistence, saving a compressed mix and opening the folder picker also passed device checks using generated audio. Seventeen core tests cover source handling, rendered audio and library operations; WAV export was checked in the simulator. Dependency versions are pinned in the Swift package and Cargo lockfile; license notices are in [ThirdPartyNotices.txt](Slowroom/ThirdPartyNotices.txt).
+
+The deck retains the current source in its cache and replaces older cached sources when another track loads. Keep source in library preserves a separate copy. Library files persist until removed through Files or the app is deleted; clearing the deck does not remove them. Exported WAV files go to the location selected in Files. Spotify tokens stay in the iPhone Keychain and are removed when signing out; reusable playback credentials are held in memory. No audio upload or publishing feature is included.

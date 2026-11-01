@@ -8,13 +8,15 @@ public enum AudioRenderer {
         progress: @Sendable (Double) -> Void = { _ in }
     ) throws {
         let settings = settings.clamped
-        let graph = try AudioGraph(url: input, settings: settings)
+        let graph = try step("open the source") { try AudioGraph(url: input, settings: settings) }
         let format = graph.processingFormat
-        try graph.engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4_096)
+        try step("prepare the renderer") {
+            try graph.engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4_096)
+        }
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_096) else {
             throw AudioError.renderFailed
         }
-        let writer = try AVAudioFile(
+        let writer = try step("create the output file") { try AVAudioFile(
             forWriting: output,
             settings: [
                 AVFormatIDKey: kAudioFormatLinearPCM,
@@ -26,16 +28,17 @@ public enum AudioRenderer {
             ],
             commonFormat: .pcmFormatFloat32,
             interleaved: false
-        )
+        ) }
         var completed = false
         defer {
+            writer.close()
             graph.player.stop()
             graph.engine.stop()
             graph.engine.disableManualRenderingMode()
             if !completed { try? FileManager.default.removeItem(at: output) }
         }
         graph.player.scheduleFile(graph.file, at: nil)
-        try graph.engine.start()
+        try step("start the renderer") { try graph.engine.start() }
         graph.player.play()
 
         let tail = settings.reverb > 0 ? settings.room.tailDuration : 0
@@ -46,11 +49,11 @@ public enum AudioRenderer {
             try Task.checkCancellation()
             let remaining = total - graph.engine.manualRenderingSampleTime
             let count = AVAudioFrameCount(min(4_096, remaining))
-            let status = try graph.engine.renderOffline(count, to: buffer)
+            let status = try step("render audio") { try graph.engine.renderOffline(count, to: buffer) }
             switch status {
             case .success:
                 guard buffer.frameLength > 0 else { throw AudioError.renderFailed }
-                try writer.write(from: buffer)
+                try step("write the output file") { try writer.write(from: buffer) }
                 stalled = 0
             case .cannotDoInCurrentContext, .insufficientDataFromInputNode:
                 stalled += 1
@@ -68,5 +71,13 @@ public enum AudioRenderer {
         }
         completed = true
         progress(1)
+    }
+
+    private static func step<T>(_ action: String, operation: () throws -> T) throws -> T {
+        do { return try operation() }
+        catch {
+            throw NSError(domain: "SlowroomRender", code: (error as NSError).code,
+                          userInfo: [NSLocalizedDescriptionKey: "Could not \(action). \(error.localizedDescription)"])
+        }
     }
 }
