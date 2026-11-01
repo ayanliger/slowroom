@@ -1,0 +1,15 @@
+.DS_Store
+.build/
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+artifacts/
+.local/
+NativeSpotify/target/
+Config/Signing.local.xcconfig
+.env
+.env.*
+*.p12
+*.p8
+*.mobileprovision
