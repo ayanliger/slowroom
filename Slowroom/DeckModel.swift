@@ -24,6 +24,12 @@ final class DeckModel {
     var showLibraryImport = false
     var currentLibraryID: UUID?
     var libraryNotice: String?
+    var showOriginalCleanup = false
+    var cleanupPlan: OriginalCleanupPlan?
+    var cleanupResult: OriginalCleanupResult?
+    var cleanupStage: String?
+    private var cleanupTask: Task<Void, Never>?
+    private var cleanupOperationID = UUID()
     let libraryDirectory: URL
     private var library: AudioLibrary?
     private var libraryTask: Task<Void, Never>?
@@ -96,7 +102,7 @@ final class DeckModel {
         }
     }
 
-    var busy: Bool { loadStage != nil || exportProgress != nil || libraryStage != nil || spotify.isSigningIn }
+    var busy: Bool { loadStage != nil || exportProgress != nil || libraryStage != nil || cleanupStage != nil || spotify.isSigningIn }
 
     func change(_ keyPath: WritableKeyPath<EffectSettings, Float>, to value: Float) {
         var settings = player.settings
@@ -345,6 +351,53 @@ final class DeckModel {
     }
 
     func cancelLibraryImport() { libraryTask?.cancel() }
+
+    func findOriginals(_ urls: [URL]) {
+        guard let library, !busy else { return }
+        cleanupPlan = nil
+        cleanupResult = nil
+        error = nil
+        cleanupStage = "Checking originals and library copies"
+        cleanupOperationID = UUID()
+        let id = cleanupOperationID
+        cleanupTask = Task { [weak self] in
+            do {
+                let plan = try await library.findOriginals(urls) { [weak self] stage in
+                    Task { @MainActor in
+                        guard let self, self.cleanupOperationID == id, self.cleanupStage != nil else { return }
+                        self.cleanupStage = stage
+                    }
+                }
+                self?.cleanupPlan = plan
+            } catch { if !(error is CancellationError) { self?.error = error.localizedDescription } }
+            self?.cleanupStage = nil
+            self?.cleanupTask = nil
+        }
+    }
+
+    func deleteMatchedOriginals() {
+        guard let library, let plan = cleanupPlan, !busy else { return }
+        error = nil
+        cleanupStage = "Verifying files before deletion"
+        cleanupOperationID = UUID()
+        let id = cleanupOperationID
+        cleanupTask = Task { [weak self] in
+            do {
+                let result = try await library.deleteOriginals(planID: plan.id) { [weak self] stage in
+                    Task { @MainActor in
+                        guard let self, self.cleanupOperationID == id, self.cleanupStage != nil else { return }
+                        self.cleanupStage = stage
+                    }
+                }
+                self?.cleanupResult = result
+                self?.cleanupPlan = nil
+            } catch { self?.error = error.localizedDescription }
+            self?.cleanupStage = nil
+            self?.cleanupTask = nil
+        }
+    }
+
+    func cancelOriginalCleanup() { cleanupTask?.cancel() }
 
     func keepCurrentSource() {
         guard let library, let track = player.track, !busy else { return }

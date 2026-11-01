@@ -7,6 +7,7 @@ public actor AudioLibrary {
     public nonisolated let directory: URL
     private let catalogURL: URL
     private var items: [LibraryItem]
+    private var cleanupPlan: OriginalCleanupPlan?
     private let fileManager = FileManager.default
 
     public init(directory: URL, catalogURL: URL) throws {
@@ -24,6 +25,117 @@ public actor AudioLibrary {
     }
 
     public func allItems() -> [LibraryItem] { items }
+
+    public func findOriginals(_ selections: [URL], progress: @Sendable (String) -> Void = { _ in }) throws -> OriginalCleanupPlan {
+        cleanupPlan = nil
+        var candidates: [OriginalCleanupCandidate] = []
+        var skipped = 0
+        var issues: [String] = []
+        var seen = Set<String>()
+        let names = Dictionary(grouping: items, by: { $0.originalName.precomposedStringWithCanonicalMapping })
+        for selection in selections {
+            let access = selection.startAccessingSecurityScopedResource()
+            defer { if access { selection.stopAccessingSecurityScopedResource() } }
+            for url in try Self.audioFiles(in: selection) {
+                try Task.checkCancellation()
+                let path = Self.canonicalPath(url)
+                guard seen.insert(path).inserted else { continue }
+                progress("Checking \(url.lastPathComponent)")
+                do {
+                    guard !isLibraryFile(url),
+                          let possible = names[url.lastPathComponent.precomposedStringWithCanonicalMapping] else {
+                        skipped += 1; continue
+                    }
+                    var matching: LibraryItem?
+                    var coordinationError: NSError?
+                    var readError: Error?
+                    NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &coordinationError) { coordinatedURL in
+                        do {
+                            guard !isLibraryFile(coordinatedURL), try Self.regularFile(coordinatedURL) else { return }
+                            let size = try Self.bytes(coordinatedURL)
+                            let sized = possible.filter { $0.originalBytes == size }
+                            guard !sized.isEmpty else { return }
+                            let fingerprint = try Self.fingerprint(coordinatedURL)
+                            matching = sized.first(where: { $0.fingerprint == fingerprint })
+                        } catch { readError = error }
+                    }
+                    if let coordinationError { throw coordinationError }
+                    if let readError { throw readError }
+                    guard let item = matching else { skipped += 1; continue }
+                    try verifyLibraryCopy(item)
+                    candidates.append(OriginalCleanupCandidate(id: UUID(), name: url.lastPathComponent,
+                                                               bytes: item.originalBytes, fileURL: url, libraryID: item.id))
+                } catch is CancellationError { throw CancellationError() }
+                catch { issues.append(url.lastPathComponent + ": " + error.localizedDescription) }
+            }
+        }
+        let plan = OriginalCleanupPlan(id: UUID(), candidates: candidates, skippedCount: skipped,
+                                       issues: issues, selections: selections)
+        cleanupPlan = plan
+        return plan
+    }
+
+    public func deleteOriginals(planID: UUID, progress: @Sendable (String) -> Void = { _ in }) throws -> OriginalCleanupResult {
+        guard let plan = cleanupPlan, plan.id == planID else { throw LibraryError.cleanupExpired }
+        cleanupPlan = nil
+        let scopes = plan.selections.filter { $0.startAccessingSecurityScopedResource() }
+        defer { scopes.forEach { $0.stopAccessingSecurityScopedResource() } }
+        var result = OriginalCleanupResult()
+        for (index, candidate) in plan.candidates.enumerated() {
+            if Task.isCancelled { result.cancelled = true; break }
+            progress("Removing original \(index + 1)/\(plan.candidates.count)")
+            do {
+                guard let item = items.first(where: { $0.id == candidate.libraryID }) else { throw LibraryError.missingFile }
+                let coordinator = NSFileCoordinator()
+                var coordinationError: NSError?
+                var deletionError: Error?
+                coordinator.coordinate(readingItemAt: directory.appendingPathComponent(item.relativePath), options: [],
+                                       writingItemAt: candidate.fileURL, options: .forDeleting, error: &coordinationError) { copy, url in
+                    do {
+                        try verifyLibraryCopy(item, at: copy)
+                        // Recheck under coordination: Files may have replaced the original after the preview.
+                        guard !isLibraryFile(url), try Self.regularFile(url),
+                              try Self.bytes(url) == item.originalBytes,
+                              try Self.fingerprint(url) == item.fingerprint else { throw LibraryError.originalChanged }
+                        try Task.checkCancellation()
+                        try fileManager.removeItem(at: url)
+                    } catch { deletionError = error }
+                }
+                if let coordinationError { throw coordinationError }
+                if let deletionError { throw deletionError }
+                result.deleted.append(candidate.name)
+                result.deletedBytes += candidate.bytes
+            } catch is CancellationError { result.cancelled = true; break }
+            catch { result.issues.append(candidate.name + ": " + error.localizedDescription) }
+        }
+        result.completedAt = Date()
+        let receipt = catalogURL.deletingLastPathComponent().appendingPathComponent("last-original-cleanup.json")
+        do { try JSONEncoder().encode(result).write(to: receipt, options: .atomic) }
+        catch { result.issues.append("Could not save the cleanup record: " + error.localizedDescription) }
+        return result
+    }
+
+    private func verifyLibraryCopy(_ item: LibraryItem, at url: URL? = nil) throws {
+        let url = url ?? directory.appendingPathComponent(item.relativePath)
+        guard let fingerprint = item.storedFingerprint, try Self.regularFile(url),
+              try Self.bytes(url) == item.storedBytes,
+              try Self.fingerprint(url) == fingerprint else { throw LibraryError.copyNotVerified }
+    }
+
+    private func isLibraryFile(_ url: URL) -> Bool {
+        let root = Self.canonicalPath(directory)
+        let path = Self.canonicalPath(url)
+        return path == root || path.hasPrefix(root + "/")
+    }
+
+    private static func canonicalPath(_ url: URL) -> String {
+        url.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    private static func regularFile(_ url: URL) throws -> Bool {
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        return values.isRegularFile == true && values.isSymbolicLink != true
+    }
 
     @discardableResult
     public func cleanImportedNames() throws -> Int {
@@ -230,12 +342,15 @@ public actor AudioLibrary {
 }
 
 public enum LibraryError: LocalizedError {
-    case invalidCatalog, missingFile, emptyTitle
+    case invalidCatalog, missingFile, emptyTitle, cleanupExpired, originalChanged, copyNotVerified
     public var errorDescription: String? {
         switch self {
         case .invalidCatalog: "The library index contains an invalid path. Its files have been preserved."
         case .missingFile: "This file is no longer in the library folder. Import it again from Files."
         case .emptyTitle: "Enter a title for this track."
+        case .cleanupExpired: "Choose the original files again before deleting them."
+        case .originalChanged: "The original no longer matches its import record. It was kept."
+        case .copyNotVerified: "The library copy could not be verified. The original was kept."
         }
     }
 }

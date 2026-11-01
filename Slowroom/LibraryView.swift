@@ -18,11 +18,12 @@ struct SlowroomRootView: View {
             if let url = model.exportURL { SaveAudioView(url: url) }
         }
         .sheet(isPresented: $model.showLibraryImport) { LibraryImportView(model: model) }
+        .sheet(isPresented: $model.showOriginalCleanup) { OriginalCleanupView(model: model) }
         .sheet(isPresented: Binding(get: { model.libraryReport != nil }, set: { if !$0 { model.libraryReport = nil } })) {
             if let report = model.libraryReport { ImportReportView(report: report) { model.libraryReport = nil } }
         }
         .alert("Could not complete the action", isPresented: Binding(
-            get: { model.error != nil && !model.showSource && !model.showLibraryImport },
+            get: { model.error != nil && !model.showSource && !model.showLibraryImport && !model.showOriginalCleanup },
             set: { if !$0 { model.error = nil } }
         )) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { model.interruption($0) }
@@ -131,7 +132,7 @@ struct LibraryView: View {
                 Section {
                     Text("Files > On My iPhone > Slowroom > Slowroom Library")
                         .font(.caption).foregroundStyle(DeckTheme.secondary)
-                    Text("Imported originals stay in their current location. Library copies are named from their tags or filenames. Use Rename for any corrections.")
+                    Text("Import keeps originals in place. Library options can remove verified originals. Use Rename to correct track names.")
                         .font(.caption).foregroundStyle(DeckTheme.secondary)
                 }.listRowBackground(DeckTheme.background).listRowSeparator(.hidden)
             }
@@ -140,6 +141,16 @@ struct LibraryView: View {
             .navigationTitle("Library")
             .searchable(text: $search, prompt: "Title or artist")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Button("Delete imported originals", systemImage: "trash") {
+                            model.error = nil
+                            model.showOriginalCleanup = true
+                        }
+                    } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+                        .disabled(model.busy || model.libraryItems.isEmpty)
+                        .accessibilityLabel("Library options").accessibilityIdentifier("libraryOptions")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Import", systemImage: "plus") { model.showLibraryImport = true }.disabled(model.busy)
                         .accessibilityIdentifier("libraryImportToolbar")

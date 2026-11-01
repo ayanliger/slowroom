@@ -5,6 +5,84 @@ import Testing
 
 @Suite(.serialized)
 struct LibraryTests {
+    @Test func deletesOnlyVerifiedOriginalAndPreservesLibraryCopy() async throws {
+        let root = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("Artist - Song.wav")
+        let unrelated = root.appendingPathComponent("Unrelated.wav")
+        try tone(source, seconds: 2)
+        try tone(unrelated, seconds: 3)
+        let library = try makeLibrary(root)
+        let item = try #require(try await library.importFile(source, kind: .mix))
+        let copy = item.audioTrack(in: library.directory).fileURL
+        let contents = try Data(contentsOf: copy)
+        let plan = try await library.findOriginals([root, source])
+        #expect(plan.candidates.count == 1)
+        #expect(FileManager.default.fileExists(atPath: source.path))
+        let result = try await library.deleteOriginals(planID: plan.id)
+        #expect(result.deleted == [source.lastPathComponent])
+        #expect(result.deletedBytes == item.originalBytes)
+        #expect(!FileManager.default.fileExists(atPath: source.path))
+        #expect(FileManager.default.fileExists(atPath: unrelated.path))
+        #expect(try Data(contentsOf: copy) == contents)
+        #expect(await library.allItems() == [item])
+    }
+
+    @Test func keepsOriginalWhenItsLibraryCopyChangesAfterPreview() async throws {
+        let root = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("song.wav")
+        try tone(source, seconds: 2)
+        let library = try makeLibrary(root)
+        let item = try #require(try await library.importFile(source, kind: .mix))
+        let plan = try await library.findOriginals([source])
+        let copy = item.audioTrack(in: library.directory).fileURL
+        var damaged = try Data(contentsOf: copy)
+        damaged[damaged.count / 2] ^= 1
+        try damaged.write(to: copy)
+        let result = try await library.deleteOriginals(planID: plan.id)
+        #expect(result.deleted.isEmpty)
+        #expect(result.issues.count == 1)
+        #expect(FileManager.default.fileExists(atPath: source.path))
+        let next = try await library.findOriginals([source])
+        #expect(next.candidates.isEmpty)
+    }
+
+    @Test func keepsChangedOriginalAndNeverDeletesLibraryFiles() async throws {
+        let root = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("song.wav")
+        try tone(source, seconds: 2)
+        let library = try makeLibrary(root)
+        let item = try #require(try await library.importFile(source, kind: .source, optimize: false, title: "song"))
+        let plan = try await library.findOriginals([source])
+        var changed = try Data(contentsOf: source)
+        changed[changed.count / 2] ^= 1
+        try changed.write(to: source)
+        let result = try await library.deleteOriginals(planID: plan.id)
+        #expect(result.deleted.isEmpty)
+        #expect(result.issues.count == 1)
+        #expect(try Data(contentsOf: source) == changed)
+        let protected = try await library.findOriginals([library.directory])
+        #expect(protected.candidates.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: item.audioTrack(in: library.directory).fileURL.path))
+    }
+
+    @Test func keepsOriginalWhenLibraryCopyIsMissingOrReplacedByLink() async throws {
+        let root = try folder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("song.wav")
+        try tone(source, seconds: 2)
+        let library = try makeLibrary(root)
+        let item = try #require(try await library.importFile(source, kind: .source, optimize: false))
+        let copy = item.audioTrack(in: library.directory).fileURL
+        try FileManager.default.removeItem(at: copy)
+        #expect(try await library.findOriginals([source]).candidates.isEmpty)
+        try FileManager.default.createSymbolicLink(at: copy, withDestinationURL: source)
+        #expect(try await library.findOriginals([source]).candidates.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: source.path))
+    }
+
     @Test func removesDownloaderNamesAndRetainsVersions() {
         let first = LibraryNaming.infer(from: "SpotiDown.App - Song - Remastered 2016 - An Artist-slowedandreverbstudio (1).wav")
         #expect(first.artist == "An Artist")
